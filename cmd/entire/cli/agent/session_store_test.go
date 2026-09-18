@@ -278,9 +278,9 @@ func TestValidateExternalSessionRef_SentinelNamesTheActualProblem(t *testing.T) 
 		wantMsg     string
 		// windowsOnly marks a case whose ref is only rooted-but-not-absolute on
 		// Windows. filepath.IsAbs on Unix is defined as exactly "starts with the
-		// separator", so there a leading separator is already caught by
-		// SessionRefIsFilesystemPath and takes the filesystem-path arm instead —
-		// the "is rooted" arm this case targets is unreachable there.
+		// separator", so there a leading separator is already caught by the
+		// filesystem-path check and takes that arm instead — the "is rooted" arm
+		// this case targets is unreachable there.
 		windowsOnly bool
 	}{
 		{

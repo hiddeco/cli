@@ -196,9 +196,9 @@ func relativeNameEscapes(cleaned string) bool {
 	return cleaned == "." || paths.IsRelativeTraversal(cleaned)
 }
 
-// SessionRefIsFilesystemPath reports whether ref is unambiguously a filesystem
+// sessionRefIsFilesystemPath reports whether ref is unambiguously a filesystem
 // path rather than an agent-defined opaque key.
-func SessionRefIsFilesystemPath(ref string) bool {
+func sessionRefIsFilesystemPath(ref string) bool {
 	return filepath.IsAbs(ref) || filepath.VolumeName(ref) != ""
 }
 
@@ -220,7 +220,7 @@ func ValidateExternalSessionRef(ref string) (filesystemPath bool, err error) {
 	if ref == "" {
 		return false, nil
 	}
-	if SessionRefIsFilesystemPath(ref) {
+	if sessionRefIsFilesystemPath(ref) {
 		// A dot component survives no round trip through a plugin that joins or
 		// normalizes it, so it is refused rather than cleaned away here.
 		//
