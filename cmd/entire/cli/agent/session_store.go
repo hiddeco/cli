@@ -327,7 +327,7 @@ func (s *SessionStore) WriteFile(name string, data []byte, perm os.FileMode) err
 	}
 	defer root.Close()
 	if dir := filepath.ToSlash(filepath.Dir(filepath.FromSlash(name))); dir != "." {
-		if err := osroot.MkdirAllNoSymlink(root, dir, 0o750); err != nil {
+		if err := osroot.MkdirAllNoSymlink(root, dir, 0o700); err != nil {
 			return fmt.Errorf("create session directory: %w", err)
 		}
 	}

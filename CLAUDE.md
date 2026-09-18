@@ -1295,7 +1295,13 @@ comments at each site say which case applies:
 
   That is deliberate and was reverted back into place once. The store's location comes from the agent's own `GetSessionDir`, not from checkpoint metadata or a hook payload, so it is not the untrusted input the rest of this section is about; and `~/.claude` or `~/.codex` managed by chezmoi/stow/yadm is an ordinary setup among exactly the people who run coding agents. Refusing it broke reads as well as writes, whenever the link was the deepest component that existed yet, with no opt-out — `allow_symlinked_agent_dirs` covers worktree-relative agent *config* directories, never the home session store. Anyone who can plant a symlink in that directory can write the transcripts directly and does not need Entire to follow it.
 
-  The directory is created `0700`, not `0750`: it holds session transcripts, and with the usual umask the difference is group-readable.
+  Directories Entire creates inside a session store are `0700`, including nested
+  levels — Copilot, Gemini and Pi all nest, and the nested directory is the one
+  holding the transcript. On the common path the AGENT creates the store root, so
+  Entire's `MkdirAll` is a no-op and the mode is the agent's; a directory that
+  already exists is not chmod'd, because Entire does not own it. Transcripts
+  themselves are written `0600`, so the residual exposure is directory listing —
+  session IDs — not content.
 - **Call `Reset()` before deleting a rooted directory** (see
   `removeEntireDirectory`). A root that outlives its directory is a handle to an
   unlinked inode: writes succeed and land nowhere.
