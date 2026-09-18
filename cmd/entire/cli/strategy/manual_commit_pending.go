@@ -306,6 +306,26 @@ func ResolveLatestCheckpointFromMap(cpIDs []id.CheckpointID, infoMap map[id.Chec
 	return latest, found
 }
 
+// sessionAgentNameFor resolves the agent a restored session's log should be
+// written under, falling back to the checkpoint's own agent when the session
+// carries none. Older checkpoints recorded the agent only at the top level,
+// and skipping those sessions turned a whole multi-session restore into a
+// no-op — the most common of the restore skip reasons, not a rare one. But
+// the assumption is wrong on a mixed-agent checkpoint (it writes the
+// transcript into the wrong agent's directory and prints that agent's resume
+// command), so the fallback is announced on errW whenever it actually fires.
+// An empty return means neither source named an agent; the caller already
+// has its own message for that case.
+func sessionAgentNameFor(errW io.Writer, i int, sessionID string, metadataAgent, checkpointAgent types.AgentType) types.AgentType {
+	if metadataAgent != "" {
+		return metadataAgent
+	}
+	if checkpointAgent != "" {
+		fmt.Fprintf(errW, "  Warning: session %d (%s) has no agent metadata; assuming %s\n", i, sessionID, checkpointAgent)
+	}
+	return checkpointAgent
+}
+
 // RestoreLogsOnly restores session logs from a logs-only pending checkpoint.
 // This fetches the transcript from entire/checkpoints/v1 and writes it to the agent's session directory.
 // Does not modify the working directory.
@@ -392,13 +412,7 @@ func (s *ManualCommitStrategy) RestoreLogsOnly(ctx context.Context, w, errW io.W
 		}
 
 		// Per-session agent metadata, falling back to the checkpoint's own agent.
-		// Older checkpoints carry the agent only at the top level, and skipping
-		// them turned a whole multi-session restore into a no-op — the most
-		// common of the six skip reasons, not a rare one.
-		sessionAgentName := content.Metadata.Agent
-		if sessionAgentName == "" {
-			sessionAgentName = point.Agent
-		}
+		sessionAgentName := sessionAgentNameFor(errW, i, sessionID, content.Metadata.Agent, point.Agent)
 		if sessionAgentName == "" {
 			fmt.Fprintf(errW, "  Warning: session %d (%s) has no agent metadata, skipping (cannot determine target directory)\n", i, sessionID)
 			continue

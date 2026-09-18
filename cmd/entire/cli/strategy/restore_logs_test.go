@@ -17,6 +17,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
 	"github.com/entireio/cli/cmd/entire/cli/testutil"
 	"github.com/entireio/cli/redact"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/go-git/go-git/v6"
@@ -348,9 +349,51 @@ func TestRestoreLogsOnly_FallsBackToCheckpointAgent(t *testing.T) {
 		PendingCheckpoint{IsLogsOnly: true, CheckpointID: cpID, Agent: agentType}, false)
 	require.NoError(t, err, "stderr: %s", stderr.String())
 	require.Len(t, restored, 1, "stderr: %s", stderr.String())
-	require.NotContains(t, stderr.String(), "has no agent metadata")
+	// Not skipped — the fallback fires and restores the session — but the
+	// assumption it made is announced (see TestRestoreLogsOnly_WarnsWhenFallingBackToCheckpointAgent).
+	require.NotContains(t, stderr.String(), "skipping")
+	require.Contains(t, stderr.String(), "assuming "+string(agentType))
 
 	got, err := os.ReadFile(filepath.Join(sessionDir, sessionID+".jsonl"))
 	require.NoError(t, err)
 	require.Equal(t, string(transcript), string(got))
+}
+
+// A mixed-agent checkpoint — one session carrying no per-session agent, one
+// that does — still restores both sessions, but the assumption made for the
+// agentless one must be visible on stderr: it is written into whichever
+// agent point.Agent names, which is wrong whenever that isn't the session's
+// real agent.
+func TestRestoreLogsOnly_WarnsWhenFallingBackToCheckpointAgent(t *testing.T) {
+	dir := t.TempDir()
+	testutil.InitRepo(t, dir)
+	t.Chdir(dir)
+
+	repo, err := git.PlainOpen(dir)
+	require.NoError(t, err)
+	t.Cleanup(func() { repo.Close() })
+
+	agentName := types.AgentName("mixed-agent-fallback")
+	agentType := types.AgentType("Mixed Agent Fallback")
+	sessionDir := filepath.Join(dir, "mixed-fallback-sessions")
+	require.NoError(t, os.MkdirAll(sessionDir, 0o750))
+	agent.Register(agentName, func() agent.Agent {
+		return &restoreLogsOnlyAgent{name: agentName, agentType: agentType, sessionDir: sessionDir}
+	})
+
+	cpID := id.MustCheckpointID("aeaeaeaeaeae")
+	transcript0 := []byte(`{"type":"user","timestamp":"2025-01-02T10:00:00Z","message":{"content":[{"type":"text","text":"legacy session"}]}}` + "\n")
+	transcript1 := []byte(`{"type":"user","timestamp":"2025-01-02T10:01:00Z","message":{"content":[{"type":"text","text":"newer session"}]}}` + "\n")
+	// Session 0 has no per-session agent (the legacy shape); session 1 does.
+	writeCommittedCheckpoint(t, repo, cpID, "legacy-session", "", transcript0, time.Date(2025, 1, 2, 10, 0, 0, 0, time.UTC))
+	writeCommittedCheckpoint(t, repo, cpID, "newer-session", agentType, transcript1, time.Date(2025, 1, 2, 10, 1, 0, 0, time.UTC))
+
+	var stdout, stderr bytes.Buffer
+	restored, err := NewManualCommitStrategy().RestoreLogsOnly(context.Background(), &stdout, &stderr,
+		PendingCheckpoint{IsLogsOnly: true, CheckpointID: cpID, Agent: agentType}, false)
+	require.NoError(t, err, "stderr: %s", stderr.String())
+	require.Len(t, restored, 2, "the fallback must still restore the agentless session; stderr: %s", stderr.String())
+
+	assert.Contains(t, stderr.String(), "no agent metadata", "the assumption must be visible")
+	assert.Contains(t, stderr.String(), string(agentType), "the warning must name the agent it assumed")
 }
