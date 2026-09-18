@@ -336,8 +336,12 @@ func TestWriteSession_RejectsUnsafeReferenceBeforeSubprocess(t *testing.T) {
 			},
 		},
 		{
+			// The ".." component is caught lexically before the symlink is ever
+			// resolved: ValidateExternalSessionRef reports ErrUnsafeSessionName
+			// for the dot component, not ErrOutsideSessionStore for the escape it
+			// would otherwise produce.
 			name:    "symlink plus parent traversal",
-			wantErr: agent.ErrOutsideSessionStore,
+			wantErr: agent.ErrUnsafeSessionName,
 			sessionRef: func(t *testing.T, sessionDir, outsideDir string) string {
 				t.Helper()
 				targetDir := filepath.Join(outsideDir, "child")

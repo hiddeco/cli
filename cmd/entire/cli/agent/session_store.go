@@ -223,17 +223,22 @@ func ValidateExternalSessionRef(ref string) (filesystemPath bool, err error) {
 	if SessionRefIsFilesystemPath(ref) {
 		// A dot component survives no round trip through a plugin that joins or
 		// normalizes it, so it is refused rather than cleaned away here.
+		//
+		// ErrUnsafeSessionName, not ErrOutsideSessionStore: the ref may be well
+		// inside the store — store.Name accepts <sessionDir>/./sess.jsonl and
+		// resolves it to sess.jsonl. What is wrong with it is its shape.
 		for _, component := range strings.Split(filepath.ToSlash(ref), "/") {
 			if component == "." || component == ".." {
-				return false, fmt.Errorf("%w: %s contains a dot path component", ErrOutsideSessionStore, ref)
+				return false, fmt.Errorf("%w: %s contains a dot path component", ErrUnsafeSessionName, ref)
 			}
 		}
 		return true, nil
 	}
 	if os.IsPathSeparator(ref[0]) {
-		return false, fmt.Errorf("%w: %s is rooted", ErrOutsideSessionStore, ref)
+		return false, fmt.Errorf("%w: %s is rooted", ErrUnsafeSessionName, ref)
 	}
 	if relativeNameEscapes(cleanRelativeName(ref)) {
+		// This one IS a containment statement: the ref leaves its own base.
 		return false, fmt.Errorf("%w: %s escapes its relative base", ErrOutsideSessionStore, ref)
 	}
 	return false, nil

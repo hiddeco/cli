@@ -20,11 +20,17 @@ var windowsReservedDeviceNameRegex = regexp.MustCompile(`(?i)^(?:con|prn|aux|nul
 // one filesystem component on a supported platform. It deliberately does not
 // apply identifier-only rules such as rejecting leading dashes or glob syntax.
 //
-// ONE component: a separator is rejected rather than split on. Callers do the
+// ONE component: `/` is rejected rather than split on. Callers do the
 // splitting, and a validator that silently accepted "sub/../../../etc" because
 // its only caller happened to split first is a trap for the second caller —
 // note that "../x" passes every other rule here, and "../.." is caught only by
 // the trailing-period check, so the mistake survives a casual smoke test.
+//
+// `\` is rejected unconditionally too, on every platform — not because it is a
+// filesystem separator here (on Unix it is an ordinary filename byte, not one).
+// Session IDs and session file names travel inside checkpoints to Windows
+// readers, where it IS a separator, and ValidateSessionID has rejected it
+// unconditionally for that reason all along.
 func ValidateFileNameComponent(name string) error {
 	if name == "" {
 		return errors.New("file name component cannot be empty")

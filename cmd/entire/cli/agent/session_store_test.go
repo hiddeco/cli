@@ -1,9 +1,11 @@
 package agent_test
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
@@ -261,4 +263,75 @@ func TestSessionStore_ProbingManyDirectoriesRetainsNoDescriptors(t *testing.T) {
 	// this guards produced exactly `candidates` extra descriptors.
 	require.Less(t, countFDs()-before, 16,
 		"probing %d candidate directories must not retain a descriptor per directory", candidates)
+}
+
+func TestValidateExternalSessionRef_SentinelNamesTheActualProblem(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	tests := []struct {
+		name        string
+		ref         string
+		wantUnsafe  bool // ErrUnsafeSessionName
+		wantOutside bool // ErrOutsideSessionStore
+		wantMsg     string
+		// windowsOnly marks a case whose ref is only rooted-but-not-absolute on
+		// Windows. filepath.IsAbs on Unix is defined as exactly "starts with the
+		// separator", so there a leading separator is already caught by
+		// SessionRefIsFilesystemPath and takes the filesystem-path arm instead —
+		// the "is rooted" arm this case targets is unreachable there.
+		windowsOnly bool
+	}{
+		{
+			name:       "dot component is a malformed name, not an escape",
+			ref:        dir + string(os.PathSeparator) + "." + string(os.PathSeparator) + "sess.jsonl",
+			wantUnsafe: true,
+			wantMsg:    "contains a dot path component",
+		},
+		{
+			name:        "rooted relative ref is a malformed name",
+			ref:         string(os.PathSeparator) + "outside.jsonl",
+			wantUnsafe:  true,
+			wantMsg:     "is rooted",
+			windowsOnly: true,
+		},
+		{
+			name:        "escaping its own base IS a containment failure",
+			ref:         filepath.Join("..", "outside.jsonl"),
+			wantOutside: true,
+			wantMsg:     "escapes its relative base",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			filesystemPath, err := agent.ValidateExternalSessionRef(tt.ref)
+
+			if tt.windowsOnly && runtime.GOOS != "windows" {
+				// Off Windows this ref is an ordinary absolute path: accepted here
+				// with no error, and left to the store's own containment check.
+				require.NoError(t, err)
+				assert.True(t, filesystemPath)
+				return
+			}
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantMsg)
+
+			assert.Equal(t, tt.wantUnsafe, errors.Is(err, agent.ErrUnsafeSessionName),
+				"ErrUnsafeSessionName")
+			assert.Equal(t, tt.wantOutside, errors.Is(err, agent.ErrOutsideSessionStore),
+				"ErrOutsideSessionStore")
+
+			// The sentinel and the message are separate strings here. Swapping the
+			// sentinel while leaving "path is outside..." in the text would pass an
+			// errors.Is-only assertion, so pin the text too.
+			if tt.wantUnsafe {
+				assert.NotContains(t, err.Error(), "path is outside the agent's session directory")
+			}
+		})
+	}
 }
