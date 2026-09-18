@@ -65,6 +65,30 @@ PR text for this branch: `docs/session-id-hardening-unit1-pr-description.md`.
    find them, and it is a precondition for Unit 5's containment gate, which would otherwise
    refuse the repo's own e2e suite.
 
+   **Unit 2 is partly decided already — do not re-derive it.** Its full design, with a
+   fix/document disposition on each of its six rows, is `## Unit 2` in
+   `docs/session-id-hardening-followup-plan.md`. But **two of those six rows were settled during
+   Unit 1's execution**, and that resolution lives in an unobvious place — line 35 of
+   `docs/session-id-hardening-unit1-implementation-plan.md`:
+
+   - the **`/./` row** is now **document**, not fix. Unit 1 kept the dot-component refusal (the
+     code documents it as deliberate) and re-sentinelled both arms, so relaxing it here would
+     retire an arm Unit 1 just corrected.
+   - the **`get-session-dir` errors row** is governed by Unit 1's item 1.3, which chose *refuse*
+     over *forward*. "Skip the preflight" is the same choice as "forward it", so this row must
+     follow that decision rather than pick independently.
+
+   Unit 2's remaining live rows are therefore MSYS-form normalisation (which needs
+   `paths.normalizeMSYSPath` exported or lifted — not a free call), the `d:`-volume ambiguity
+   (document), the legacy-ID hard fail (document), and the device-name regex extension (fix, and
+   **re-run the exhaustive false-positive sweep afterwards** — the existing zero-false-positive
+   result was measured against the *current* regex and does not carry over).
+
+   One more Unit 2 coupling, from the final review's Minor 6: spec item 1.10 tells the
+   protocol-doc author not to describe "the ones Unit 2 will later remove". Since two rows are
+   now *document* rather than *fix*, that list is shorter than the spec assumed when it was
+   written.
+
 ## Decisions taken without the author present
 
 Each was recorded as it was made, with what it costs if wrong. The first four are the
