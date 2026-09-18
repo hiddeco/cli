@@ -335,3 +335,21 @@ func TestValidateExternalSessionRef_SentinelNamesTheActualProblem(t *testing.T) 
 		})
 	}
 }
+
+func TestCleanRelativeName_RejectsRootedUnderEitherSeparatorRule(t *testing.T) {
+	t.Parallel()
+
+	// windowsSeparator models os.IsPathSeparator on Windows, so the rule is
+	// exercisable from a Unix test run. CI cross-compiles for Windows rather
+	// than running it, so without this seam the rule ships untested.
+	windowsSeparator := func(c byte) bool { return c == '/' || c == '\\' }
+	unixSeparator := func(c byte) bool { return c == '/' }
+
+	assert.True(t, agent.RootedRelativeNameForTesting(`\foo`, windowsSeparator),
+		`\foo is rooted on Windows`)
+	assert.True(t, agent.RootedRelativeNameForTesting("/foo", windowsSeparator))
+	assert.True(t, agent.RootedRelativeNameForTesting("/foo", unixSeparator))
+	assert.False(t, agent.RootedRelativeNameForTesting(`\foo`, unixSeparator),
+		`on Unix a backslash is an ordinary byte, so \foo is a plain name`)
+	assert.False(t, agent.RootedRelativeNameForTesting("a/b", windowsSeparator))
+}

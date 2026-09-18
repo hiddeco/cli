@@ -172,6 +172,9 @@ func (s *SessionStore) Name(p string) (string, error) {
 	// which is the answer this containment check exists to give. No-op on Unix,
 	// where VolumeName is always empty.
 	if !filepath.IsAbs(p) && filepath.VolumeName(p) == "" {
+		if rootedRelativeName(p, os.IsPathSeparator) {
+			return "", fmt.Errorf("%w: %s is rooted", ErrUnsafeSessionName, p)
+		}
 		cleaned := cleanRelativeName(p)
 		if relativeNameEscapes(cleaned) {
 			return "", fmt.Errorf("%w: %s", ErrOutsideSessionStore, p)
@@ -187,6 +190,19 @@ func (s *SessionStore) Name(p string) (string, error) {
 
 func cleanRelativeName(p string) string {
 	return filepath.ToSlash(filepath.Clean(filepath.FromSlash(p)))
+}
+
+// rootedRelativeName reports whether a non-absolute path is nonetheless rooted
+// under the given separator rule. On Windows "\foo" is not absolute — it has no
+// volume — but it is rooted, and Clean+ToSlash turns it into "/foo", which
+// relativeNameEscapes does not treat as escaping. Returning it as a name inside
+// the store is wrong even though every current downstream caller refuses it.
+//
+// Parameterized on the separator rule rather than calling os.IsPathSeparator
+// directly so the Windows-only behaviour is exercisable from a Unix test run —
+// CI cross-compiles for Windows rather than running it there.
+func rootedRelativeName(p string, isSeparator func(byte) bool) bool {
+	return p != "" && isSeparator(p[0])
 }
 
 // relativeNameEscapes reports whether an already-cleaned relative name leaves
@@ -234,7 +250,7 @@ func ValidateExternalSessionRef(ref string) (filesystemPath bool, err error) {
 		}
 		return true, nil
 	}
-	if os.IsPathSeparator(ref[0]) {
+	if rootedRelativeName(ref, os.IsPathSeparator) {
 		return false, fmt.Errorf("%w: %s is rooted", ErrUnsafeSessionName, ref)
 	}
 	if relativeNameEscapes(cleanRelativeName(ref)) {
