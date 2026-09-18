@@ -47,12 +47,15 @@ PR text for this branch: `docs/session-id-hardening-unit1-pr-description.md`.
 
 ## UNFINISHED — read this first
 
-1. **The final whole-branch review was dispatched and its result was never captured.** It was
-   running over `8a70a5ef6..1c010d698` when the session ended. Nothing in this branch reflects
-   its findings. **Re-run it before merging.** It was asked to do four things no task-scoped
-   review could: triage the eight deferred minors below, judge the four consequential rulings,
-   verify `afe62c4c5`'s no-instantiation property survived, and look for defects visible only
-   from the whole diff.
+1. **The final whole-branch review DID report, just after this file was first written and
+   pushed. Its verdict: _ready with fixes_.** Its findings are in "Final review" below and are
+   **not yet applied** — no fix wave was run, because the session ended. That section is the
+   top of the next session's queue.
+
+   What it settled: the `afe62c4c5` no-instantiation property is **intact** (traced through all
+   three subtests, including the one that breaks if resolution moves up — it is real, not
+   incidental); the eight deferred minors are triaged and **none blocks merge**; and all four
+   consequential rulings are **sound**.
 2. **The three doc commits are unsigned.** `e731852f7`, `e21a1aff0` and `a33fb477f` were created
    with `-c commit.gpgsign=false`; all eleven code commits are signed. Re-signing them is a local
    rewrite and was offered but never decided.
@@ -125,10 +128,83 @@ consequential ones.
   block, so spec item 1.5 is only partially delivered. Accepted as the correct trade — the
   placement that would cover it is the one that reverts `afe62c4c5`.
 
-## Eight deferred minors — none triaged
+## Final review — findings, NOT yet applied
 
-The final review was to decide block/fix/leave for each. It never reported, so **all eight are
-still untriaged**.
+Verdict **ready with fixes**. The eleven commits compose cleanly; both new seams
+(`rootedRelativeName`, `sessionAgentNameFor`) are consumed by both intended call sites rather
+than left single-purpose.
+
+### Important 1 — `CLAUDE.md:1295` states something false, and it propagated to five places
+
+"Copilot, Gemini and Pi all nest" is **wrong for Gemini and Pi**. Both put their per-project
+component in `GetSessionDir` (the store *root*), not in `ResolveSessionFile`:
+`geminicli/gemini.go:113` → `~/.gemini/tmp/<hash>/chats`; `pi/pi.go:139` →
+`<home>/sessions/<encoded-repo>`. For both, `filepath.Dir(name) == "."`, so `WriteFile`'s
+`MkdirAllNoSymlink` branch never fires — their directory was already covered by
+`openRootForWrite`'s `MkdirAll(s.dir, 0o700)`. The agents that genuinely nest inside the store
+are **Copilot** (`<id>/events.jsonl`), **Codex** (`YYYY/MM/DD/rollout-*.jsonl`,
+`codex.go:711`) and **Cursor** (`cursor.go:83`) — the last two are missing from the sentence.
+
+The code change is correct; only the justification is wrong. **It appears in five places and
+nobody re-derived it:** spec §1.4, plan Task 3, commit `41aa15cd4`'s message, `CLAUDE.md`, and
+`docs/session-id-hardening-unit1-pr-description.md`. Fix all five — the spec especially, since
+Units 2–6 will be planned from it.
+
+This is the same defect class the branch exists to remove: a plausible claim about the codebase,
+written once and copied forward without checking.
+
+### Important 2 — `external/external.go:221-222` uses the sentinel that names the wrong problem
+
+The new refusal wraps `ErrOutsideSessionStore`, rendering as *"path is outside the agent's
+session directory: … is filesystem-shaped but no repo path was supplied"* — asserting
+containment **failed** when the truth is it could not be **evaluated**. Commit `b151c9003`, on
+this same branch, exists to stop exactly this. Use `ErrUnsafeSessionName` or a dedicated
+sentinel, and update the two `require.ErrorIs` in `TestWriteSession_ContainmentDoesNotDependOnRepoPath`.
+No non-test code does `errors.Is` on either sentinel, so this is message quality only.
+**Missed by the same sweep:** `session_store.go:164` still returns
+`ErrOutsideSessionStore: empty path` — an empty name is malformed, not outside anything.
+
+### Minor (final review)
+
+3. `session_store.go:158-160` — `Name`'s doc comment names only `ErrOutsideSessionStore`; it now
+   also returns `ErrUnsafeSessionName` (`:176`).
+4. `resume.go:905-909` — `"resume session started"` carries no `agent`; move it below `:996` or
+   say so in the comment, since the commit claims to restore what main logged.
+5. `manual_commit_pending.go:318` — the `assuming <agent>` warning fires for every
+   *single-session* legacy checkpoint, where the assumption cannot be wrong. `totalSessions` is
+   in scope at `:380`; gate on `totalSessions > 1` to keep the spec's intent without noise on the
+   commonest resume.
+6. Spec 1.10's "then audit the rest" of `external-agent-protocol.md` was never scheduled into a
+   task. The reviewer spot-audited it and found no further contradiction, so it is closable —
+   but record that someone did it.
+7. Spec 1.7's golden-message test was consciously dropped;
+   `TestValidateFileNameComponentRejectsSeparators` asserts no message, so "rejection is
+   intended rather than incidental" is unpinned. One `errMsg` field fixes it.
+8. `resume.go:988-991` overclaims — the `sessionIDErr == nil` gate is framed partly as safety,
+   but in the only case it changes the agent is already instantiated. It is no-op avoidance.
+
+### `docs/session-id-hardening-unit1-pr-description.md` — three factual errors
+
+That file is committed and pushed, so these are live:
+- The `b151c9003` paragraph claims `SessionStore.Name` also had a dot-component arm converted to
+  `ErrUnsafeSessionName`. It didn't — `b151c9003` touches only `ValidateExternalSessionRef`;
+  `Name`'s rooted check was **added** by `fe9210c6a`, as `ErrUnsafeSessionName` from birth. The
+  document's own `fe9210c6a` paragraph contradicts this one.
+- The `d1e6a62ed` paragraph inverts the bug: the `WithAgent` call had been **dropped entirely**;
+  `types.AgentName(metadata.Agent)` was the *tempting wrong fix*, never the shipped behaviour.
+- The `41aa15cd4` paragraph repeats the Gemini/Pi nesting error.
+- Smaller: "eleven smaller defects" vs the spec's twelve Unit 1 items (1.12 produced no commit);
+  and point 3's closing parenthetical reads as though component checks now run without a repo
+  path — they don't, the ref is refused.
+
+### Also flagged
+
+The spec's *Test strategy* section committed to pinning resume shapes A, B, C and "all sessions
+lack agent metadata" as a table test A/B'd against main. That remains proven only by throwaway
+probes — the one written commitment in the spec this branch leaves open. Say so in the PR rather
+than leaving it silent; it is the same evidentiary weakness the spec itself flagged.
+
+## Eight deferred minors — triaged by the final review, none blocks merge
 
 1. `session_store_test.go` — `wantMsg` unused in the `windowsOnly` early-return branch.
 2. `ValidateExternalSessionRef`'s "is rooted" arm is untestable outside Windows (pre-existing).
