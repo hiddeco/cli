@@ -990,7 +990,7 @@ func restoreResumeSessions(ctx context.Context, w, errW io.Writer, metadata *str
 		if err != nil {
 			return nil, fmt.Errorf("failed to get worktree root: %w", err)
 		}
-		session, ok, err := restoreSingleSession(ctx, w, ag, sessionID, checkpointID, repoRoot, force)
+		session, ok, err := restoreSingleSession(logCtx, w, ag, sessionID, checkpointID, repoRoot, force)
 		if err != nil || !ok {
 			return nil, err
 		}
