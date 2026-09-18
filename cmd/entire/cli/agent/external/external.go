@@ -212,7 +212,15 @@ func (e *Agent) WriteSession(ctx context.Context, session *agent.AgentSession) e
 	if err != nil {
 		return fmt.Errorf("write-session: validate session reference: %w", err)
 	}
-	if needsStoreCheck && session.RepoPath != "" {
+	if needsStoreCheck {
+		// A filesystem-shaped ref needs the store to decide containment, and
+		// without a RepoPath there is no store to resolve. Refuse rather than
+		// forward: gating containment on a field both current callers happen to
+		// set is a check that disappears for the next caller that does not.
+		if session.RepoPath == "" {
+			return fmt.Errorf("write-session: validate session reference: %w: %s is filesystem-shaped but no repo path was supplied to resolve the session store",
+				agent.ErrOutsideSessionStore, session.SessionRef)
+		}
 		sessionDir, dirErr := e.getSessionDir(ctx, session.RepoPath)
 		if dirErr != nil {
 			return fmt.Errorf("write-session: open session store: %w", dirErr)

@@ -16,6 +16,8 @@ import (
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
 	"github.com/entireio/cli/cmd/entire/cli/osroot"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // testBinaryDir creates a temp directory with a mock entire-agent-test binary.
@@ -440,6 +442,55 @@ func TestWriteSession_PreservesOpaqueRelativeReferenceWithMissingStore(t *testin
 			}
 		})
 	}
+}
+
+func TestWriteSession_ContainmentDoesNotDependOnRepoPath(t *testing.T) {
+	t.Parallel()
+
+	t.Run("absolute ref outside the store is refused without RepoPath", func(t *testing.T) {
+		t.Parallel()
+
+		ea, _, marker := newWriteRecordingAgent(t)
+		outside := filepath.Join(t.TempDir(), "outside.jsonl")
+
+		err := ea.WriteSession(t.Context(), &agent.AgentSession{
+			RepoPath:   "", // the field the check must not depend on
+			SessionRef: outside,
+		})
+		require.ErrorIs(t, err, agent.ErrOutsideSessionStore)
+
+		_, statErr := os.Stat(marker)
+		assert.True(t, os.IsNotExist(statErr), "write-session subprocess must not run")
+	})
+
+	t.Run("relative escaping ref is refused without RepoPath", func(t *testing.T) {
+		t.Parallel()
+
+		ea, _, marker := newWriteRecordingAgent(t)
+
+		err := ea.WriteSession(t.Context(), &agent.AgentSession{
+			RepoPath:   "",
+			SessionRef: filepath.Join("..", "outside.jsonl"),
+		})
+		require.ErrorIs(t, err, agent.ErrOutsideSessionStore)
+
+		_, statErr := os.Stat(marker)
+		assert.True(t, os.IsNotExist(statErr), "write-session subprocess must not run")
+	})
+
+	t.Run("opaque relative key is still forwarded without RepoPath", func(t *testing.T) {
+		t.Parallel()
+
+		ea, _, marker := newWriteRecordingAgent(t)
+
+		require.NoError(t, ea.WriteSession(t.Context(), &agent.AgentSession{
+			RepoPath:   "",
+			SessionRef: "tenant/session-key",
+		}))
+
+		_, statErr := os.Stat(marker)
+		assert.NoError(t, statErr, "an opaque key must still reach the plugin")
+	})
 }
 
 func TestNew_WrongProtocolVersion(t *testing.T) {

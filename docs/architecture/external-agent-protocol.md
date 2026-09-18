@@ -524,14 +524,25 @@ Used as input to `write-session` and output from `read-session`.
 
 ### session_ref constraints
 
-`session_ref` stays agent-defined: a plugin backed by a database may return an opaque key rather than a path, and the CLI forwards such a value to `write-session` unchanged. Two rules apply to every `session_ref` regardless of shape, and a third applies only to the ones that are unambiguously filesystem paths.
+`session_ref` is agent-defined. Entire preflights it before invoking
+`write-session`, and the rules differ by shape:
 
-Always:
+- **Opaque relative references** (a database key, a tenant-scoped identifier)
+  are forwarded as given. Two rules still apply: the reference must not be
+  rooted, and it must not lexically escape its own base. Nothing else is
+  checked — no session store is consulted and no component rules are applied,
+  so a non-escaping dot segment such as `tenant/../session-key` is forwarded
+  unchanged.
+- **Filesystem-shaped references** (absolute, or carrying a volume name) must
+  contain no `.` or `..` component; must have no component carrying a volume
+  separator, a Windows reserved device name, a control character, or a
+  trailing period or space; must have no symlinked component or leaf; and must
+  resolve inside the directory the plugin itself reported from
+  `get-session-dir`. A filesystem-shaped reference supplied without a repo path
+  is refused, because there is no session store to resolve it against.
 
-- It must not be rooted (`/sessions/abc.jsonl` with no volume).
-- Once cleaned it must not escape its own base, so `../outside.jsonl` and `nested/../../outside.jsonl` are refused. An opaque key that merely *contains* a dot segment without escaping, such as `tenant/../session-key`, is forwarded as given.
-
-When the value is absolute or carries a volume name, the CLI treats it as a filesystem path and additionally requires that it contain no `.` or `..` component, and that it resolve inside the directory the plugin itself reported from `get-session-dir`. A ref that resolves outside that directory is refused before `write-session` is spawned.
+An empty `session_dir` from `get-session-dir`, or a `get-session-dir` that
+exits non-zero, fails the write.
 
 This is a preflight, not a sandbox. The plugin runs as its own process and can write wherever its own permissions allow; the check exists so the CLI does not *hand* it a path that leaves the store it named.
 
