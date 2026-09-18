@@ -959,13 +959,20 @@ func restoreResumeSessions(ctx context.Context, w, errW io.Writer, metadata *str
 	// must still reach RestoreLogsOnly's per-session resolution (already run
 	// above) rather than failing the whole resume.
 	//
+	// Gated on sessionIDErr == nil too: when the top-level session ID itself
+	// is unsafe, the fallback below can never use resolvedAgent (same guard),
+	// so resolving here would only be an agent instantiation with no purpose
+	// — and, per the gate's own reasoning above, one worth skipping.
+	//
 	// metadata.Agent is a types.AgentType ("Claude Code"); WithAgent takes a
 	// types.AgentName ("claude-code"). Converting between them compiles and logs
 	// a value nothing else in the tree emits — resolve and use ag.Name().
 	var resolvedAgent agent.Agent
-	if ag, agErr := strategy.ResolveAgentForResume(metadata.Agent); agErr == nil {
-		resolvedAgent = ag
-		logCtx = logging.WithAgent(logCtx, ag.Name())
+	if sessionIDErr == nil {
+		if ag, agErr := strategy.ResolveAgentForResume(metadata.Agent); agErr == nil {
+			resolvedAgent = ag
+			logCtx = logging.WithAgent(logCtx, ag.Name())
+		}
 	}
 
 	if sessionIDErr == nil && (restoreErr != nil || len(sessions) == 0) {
