@@ -944,12 +944,40 @@ func restoreResumeSessions(ctx context.Context, w, errW io.Writer, metadata *str
 		}
 	}
 
+	// Resolve for the remaining log context and a possible fallback restore,
+	// deferred until here — after the unsafe-session-ID gate above — so an
+	// unsafe checkpoint never causes an agent to be instantiated at all.
+	// Resolving earlier (e.g. unconditionally at function entry) would
+	// reintroduce exactly what that gate exists to prevent:
+	// agent.GetByAgentType's linear search instantiates every registered
+	// agent factory until it finds a match, which
+	// TestRestoreResumeSessions_RejectsUnsafeModernSessionsWithoutLegacyFallback
+	// pins must not happen for a tampered checkpoint.
+	//
+	// A failure here is NOT fatal: since the fallback moved below, the
+	// multi-session path no longer needs an agent, and an unresolvable one
+	// must still reach RestoreLogsOnly's per-session resolution (already run
+	// above) rather than failing the whole resume.
+	//
+	// metadata.Agent is a types.AgentType ("Claude Code"); WithAgent takes a
+	// types.AgentName ("claude-code"). Converting between them compiles and logs
+	// a value nothing else in the tree emits — resolve and use ag.Name().
+	var resolvedAgent agent.Agent
+	if ag, agErr := strategy.ResolveAgentForResume(metadata.Agent); agErr == nil {
+		resolvedAgent = ag
+		logCtx = logging.WithAgent(logCtx, ag.Name())
+	}
+
 	if sessionIDErr == nil && (restoreErr != nil || len(sessions) == 0) {
 		// The single-session fallback, for missing logs and for older
 		// checkpoints without per-session agent metadata.
-		ag, err := strategy.ResolveAgentForResume(metadata.Agent)
-		if err != nil {
-			return nil, fmt.Errorf("failed to resolve agent: %w", err)
+		ag := resolvedAgent
+		if ag == nil {
+			resolved, err := strategy.ResolveAgentForResume(metadata.Agent)
+			if err != nil {
+				return nil, fmt.Errorf("failed to resolve agent: %w", err)
+			}
+			ag = resolved
 		}
 		repoRoot, err := paths.WorktreeRoot(ctx)
 		if err != nil {

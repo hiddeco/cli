@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -18,6 +19,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/agent/types"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
+	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/osroot"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/strategy"
@@ -29,6 +31,7 @@ import (
 	"github.com/go-git/go-git/v6/plumbing/filemode"
 	"github.com/go-git/go-git/v6/plumbing/object"
 	"github.com/spf13/cobra"
+	"github.com/stretchr/testify/require"
 )
 
 const resumeTestStrategy = "manual-commit"
@@ -1247,6 +1250,76 @@ func TestRestoreResumeSessions_PreservesLegacySingleSessionFallback(t *testing.T
 	if len(ag.writtenSessionIDs) != 1 || ag.writtenSessionIDs[0] != sessionID {
 		t.Fatalf("written sessions = %v, want %q", ag.writtenSessionIDs, sessionID)
 	}
+}
+
+// distinctAgentNameTypeAgent wraps recordingResumeAgent but gives Name() and
+// Type() deliberately different values ("distinct-resume-name" vs "Distinct
+// Resume Type"), unlike recordingResumeAgent where both return the identical
+// string "recording-resume". A test asserting on the logged agent attribute
+// needs that gap: with Name() == Type(), a broken types.AgentName(agentType)
+// conversion produces the exact same bytes as the correct ag.Name() call, so
+// the assertion would pass whether or not the bug was fixed.
+type distinctAgentNameTypeAgent struct {
+	*recordingResumeAgent
+}
+
+func (a distinctAgentNameTypeAgent) Name() types.AgentName { return "distinct-resume-name" }
+func (a distinctAgentNameTypeAgent) Type() types.AgentType { return "Distinct Resume Type" }
+
+var _ agent.Agent = distinctAgentNameTypeAgent{}
+
+// TestRestoreResumeSessions_LogContextCarriesAgentName pins that the resume
+// debug log lines carry the agent's registry NAME (types.AgentName, e.g.
+// "distinct-resume-name"), not its human-readable TYPE (types.AgentType, e.g.
+// "Distinct Resume Type"). logging.WithAgent takes a types.AgentName;
+// metadata.Agent is a types.AgentType, and types.AgentName(metadata.Agent)
+// compiles but logs the wrong string, which is the regression this test
+// exists to catch.
+func TestRestoreResumeSessions_LogContextCarriesAgentName(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	logRoot := filepath.Join(tmpDir, "logroot")
+	if err := os.MkdirAll(logRoot, 0o755); err != nil {
+		t.Fatalf("mkdir log root: %v", err)
+	}
+	logger, err := logging.New(logging.Config{
+		Root:  func() (*os.Root, error) { return os.OpenRoot(logRoot) },
+		Dir:   "logs",
+		Level: slog.LevelDebug,
+	})
+	if err != nil {
+		t.Fatalf("logging.New() error = %v", err)
+	}
+	ctx := logging.WithLogger(t.Context(), logger)
+
+	repo, _, _ := setupResumeTestRepo(t, tmpDir, false)
+	cleanupResumeTestRepo(t, repo, tmpDir)
+	ag := distinctAgentNameTypeAgent{recordingResumeAgent: &recordingResumeAgent{sessionDir: filepath.Join(tmpDir, "sessions")}}
+	t.Cleanup(agent.SnapshotRegistryForTesting())
+	agent.Register(ag.Name(), func() agent.Agent { return ag })
+
+	cpID := id.MustCheckpointID("bcbcbcbcbcbc")
+	writeCommittedResumeCheckpointWithAgent(t, repo, cpID, "safe-session", time.Now(), ag.Type())
+	metadata := &strategy.CheckpointInfo{CheckpointID: cpID, SessionID: "safe-session", Agent: ag.Type()}
+
+	var stdout, stderr bytes.Buffer
+	if _, err := restoreResumeSessions(ctx, &stdout, &stderr, metadata, true); err != nil {
+		t.Fatalf("restoreResumeSessions() error = %v", err)
+	}
+
+	if err := logger.Close(); err != nil {
+		t.Fatalf("logger.Close() error = %v", err)
+	}
+	logged, err := os.ReadFile(filepath.Join(logRoot, "logs", logging.LogFileName))
+	if err != nil {
+		t.Fatalf("read log file: %v", err)
+	}
+
+	require.Contains(t, string(logged), `"agent":"`+string(ag.Name())+`"`,
+		"resume log lines must carry the agent NAME")
+	require.NotContains(t, string(logged), `"agent":"`+string(ag.Type())+`"`,
+		"logging the AgentType is the bug this test exists for")
 }
 
 func TestRestoreSingleSession_UsesV1TranscriptAndReturnsRestoredSession(t *testing.T) {
