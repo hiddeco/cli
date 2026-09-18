@@ -1252,6 +1252,48 @@ func TestRestoreResumeSessions_PreservesLegacySingleSessionFallback(t *testing.T
 	}
 }
 
+// TestRestoreResumeSessions_ScansStoredSessionIDsWhenRestoreErrors pins that
+// the unsafe-ID scan runs whenever the single-session fallback is about to
+// run, not only on the restoreErr == nil path. The checkpoint ID here is
+// never written to the store, so RestoreLogsOnly's own read fails and
+// restoreErr != nil -- the same condition that triggers the fallback. The
+// top-level SessionID is deliberately safe (the old code would have happily
+// fallen back to it); the stored SessionIDs entry is unsafe. A tampered
+// checkpoint that also errors must still be reported, not silently resolved
+// to the top-level session.
+func TestRestoreResumeSessions_ScansStoredSessionIDsWhenRestoreErrors(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	repo, _, _ := setupResumeTestRepo(t, tmpDir, false)
+	cleanupResumeTestRepo(t, repo, tmpDir)
+	ag := &recordingResumeAgent{sessionDir: filepath.Join(tmpDir, "sessions")}
+	t.Cleanup(agent.SnapshotRegistryForTesting())
+	factoryCalls := 0
+	agent.Register(ag.Name(), func() agent.Agent {
+		factoryCalls++
+		return ag
+	})
+
+	info := &strategy.CheckpointInfo{
+		CheckpointID: id.MustCheckpointID("abcdefabcdef"), // absent from the store
+		SessionID:    "safe-session",                      // top-level ID is safe
+		SessionIDs:   []string{".. "},                     // stored ID is unsafe
+		SessionCount: 1,
+		Agent:        ag.Type(),
+	}
+
+	var stdout, stderr bytes.Buffer
+	restored, err := restoreResumeSessions(t.Context(), &stdout, &stderr, info, false)
+
+	require.Error(t, err, "a tampered ID must be reported, not silently fallen back past")
+	require.Contains(t, err.Error(), "unsafe checkpoint session ID")
+	require.Empty(t, restored)
+	require.Empty(t, ag.writtenSessionIDs, "nothing may be written")
+	require.Zero(t, factoryCalls, "unsafe IDs must not cause agent resolution")
+	require.Zero(t, ag.getSessionDirCalls, "unsafe IDs must not cause agent setup")
+}
+
 // distinctAgentNameTypeAgent wraps recordingResumeAgent but gives Name() and
 // Type() deliberately different values ("distinct-resume-name" vs "Distinct
 // Resume Type"), unlike recordingResumeAgent where both return the identical

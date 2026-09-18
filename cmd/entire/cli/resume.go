@@ -933,7 +933,13 @@ func restoreResumeSessions(ctx context.Context, w, errW io.Writer, metadata *str
 	// for, and suppressing it for every multi-session checkpoint made `entire
 	// resume` exit 0 having printed "Restoring N sessions from checkpoint:" and
 	// nothing else.
-	if restoreErr == nil && len(sessions) == 0 {
+	//
+	// Gated on the same condition as the fallback below (restoreErr != nil ||
+	// len(sessions) == 0), not just the no-error half of it: a tampered
+	// checkpoint that ALSO produces a restore error would otherwise skip this
+	// scan and reach the fallback with an unscanned unsafe ID, getting exactly
+	// the silent top-level restore this scan exists to prevent.
+	if restoreErr != nil || len(sessions) == 0 {
 		for _, storedSessionID := range metadata.SessionIDs {
 			if err := validation.ValidateSessionID(storedSessionID); err != nil {
 				return nil, fmt.Errorf("unsafe checkpoint session ID %q: %w", storedSessionID, err)
